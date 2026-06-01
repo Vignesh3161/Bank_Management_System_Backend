@@ -6,16 +6,38 @@ const qrcode = require('qrcode');
 const { comparePassword: cmpPw, hashPassword: hshPw, hashHMAC, generateAccountNumber, encryptAES } = require('../utils/cryptoUtils');
 
 exports.login = async (req, res) => {
-    const { username, password } = req.body;
+    const { phone, username, password } = req.body;
+    const loginIdentifier = phone || username;
 
     try {
-        // Search in both users (staff) and customers
-        let result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
-        let user = result.rows[0];
+        let user;
         let actorType = 'USER';
 
+        // Check if the identifier is a 10-digit phone number
+        const isPhone = /^\d{10}$/.test(loginIdentifier);
+
+        if (isPhone) {
+            // It's a mobile number, query customers table by mobile_hmac
+            const mobileHmac = hashHMAC(loginIdentifier);
+            const result = await db.query('SELECT * FROM customers WHERE mobile_hmac = $1', [mobileHmac]);
+            user = result.rows[0];
+            if (user) {
+                actorType = 'CUSTOMER';
+            }
+        }
+
+        // Fallback to checking users (staff) by username
         if (!user) {
-            result = await db.query('SELECT * FROM customers WHERE username = $1', [username]);
+            const result = await db.query('SELECT * FROM users WHERE username = $1', [loginIdentifier]);
+            user = result.rows[0];
+            if (user) {
+                actorType = 'USER';
+            }
+        }
+
+        // Fallback to checking customers by username (just in case there are legacy records)
+        if (!user) {
+            const result = await db.query('SELECT * FROM customers WHERE username = $1', [loginIdentifier]);
             user = result.rows[0];
             if (user) {
                 actorType = 'CUSTOMER';
@@ -29,15 +51,15 @@ exports.login = async (req, res) => {
         const table = actorType === 'CUSTOMER' ? 'customers' : 'users';
 
         if (!isMatch) {
-            const newAttempts = user.failed_login_count + 1;
+            const newAttempts = (user.failed_login_count || 0) + 1;
             let updateQuery = `UPDATE ${table} SET failed_login_count = $1 WHERE id = $2`;
             if (newAttempts >= 5) updateQuery = `UPDATE ${table} SET failed_login_count = $1, is_locked = TRUE WHERE id = $2`;
             await db.query(updateQuery, [newAttempts, user.id]);
             
-            await db.query(
+            db.query(
                 'INSERT INTO audit_log (actor_id, actor_type, action, details) VALUES ($1, $2, $3, $4)',
                 [user.id, actorType, 'LOGIN_FAILED', JSON.stringify({ reason: 'Invalid password', attempt: newAttempts })]
-            );
+            ).catch(err => console.error('Audit log failed:', err));
 
             return res.status(401).json({ error: 'Invalid credentials' });
         }
@@ -55,7 +77,7 @@ exports.login = async (req, res) => {
         );
 
         // In a real system, send SMS here via Twilio/Bull
-        console.log(`[DEBUG] OTP for ${username}: ${otp}`);
+        console.log(`[DEBUG] OTP for ${loginIdentifier}: ${otp}`);
 
         const otpSessionToken = jwt.sign(
             { id: user.id, username: user.username, role: user.role || 'CUSTOMER', actorType, targetHmac, purpose: 'LOGIN' },
@@ -92,9 +114,14 @@ exports.verifyOTP = async (req, res) => {
         // Mark OTP as used
         await db.query('UPDATE otp_verifications SET is_used = TRUE WHERE id = $1', [otpRes.rows[0].id]);
 
+        // Fetch current token_version from database to ensure consistency
+        const table = decoded.role === 'CUSTOMER' ? 'customers' : 'users';
+        const userRes = await db.query(`SELECT token_version FROM ${table} WHERE id = $1`, [decoded.id]);
+        const dbTokenVersion = userRes.rows[0]?.token_version || 1;
+
         // Issue JWT Access Token
         const token = jwt.sign(
-            { id: decoded.id, username: decoded.username, role: decoded.role, token_version: 1 },
+            { id: decoded.id, username: decoded.username, role: decoded.role, token_version: dbTokenVersion },
             process.env.JWT_SECRET,
             { expiresIn: '24h' }
         );
@@ -107,10 +134,10 @@ exports.verifyOTP = async (req, res) => {
         );
 
         // Audit Log
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action) VALUES ($1, $2, $3)',
             [decoded.id, decoded.actorType, 'LOGIN_SUCCESS']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ token, refresh_token: refreshToken, user: { id: decoded.id, username: decoded.username, role: decoded.role } });
     } catch (err) {
@@ -122,6 +149,7 @@ exports.verifyOTP = async (req, res) => {
 exports.register = async (req, res) => {
     const { username, password, full_name, email, mobile, dob } = req.body;
     try {
+        const finalUsername = username || mobile;
         const hashedPassword = await hshPw(password);
         const emailHmac = hashHMAC(email);
         const mobileHmac = hashHMAC(mobile);
@@ -132,14 +160,14 @@ exports.register = async (req, res) => {
 
         const result = await db.query(
             'INSERT INTO customers (username, password_hash, full_name, email_hmac, mobile_hmac, dob, kyc_status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, username',
-            [username, hashedPassword, full_name, emailHmac, mobileHmac, dob, 'PENDING']
+            [finalUsername, hashedPassword, full_name, emailHmac, mobileHmac, dob, 'PENDING']
         );
         
         // Audit Log
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
-            [result.rows[0].id, 'CUSTOMER', 'CUSTOMER_REGISTERED', result.rows[0].id, 'CUSTOMER', JSON.stringify({ username })]
-        );
+            [result.rows[0].id, 'CUSTOMER', 'CUSTOMER_REGISTERED', result.rows[0].id, 'CUSTOMER', JSON.stringify({ username: finalUsername })]
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ ...result.rows[0], role: 'CUSTOMER' });
     } catch (err) {
@@ -158,8 +186,12 @@ exports.refresh = async (req, res) => {
         const sessionRes = await db.query('SELECT * FROM sessions WHERE jti = $1', [decoded.jti]);
         if (sessionRes.rowCount > 0) return res.status(401).json({ error: 'Session revoked' });
 
+        const table = decoded.role === 'CUSTOMER' ? 'customers' : 'users';
+        const userRes = await db.query(`SELECT token_version FROM ${table} WHERE id = $1`, [decoded.id]);
+        const dbTokenVersion = userRes.rows[0]?.token_version || 1;
+
         const newToken = jwt.sign(
-            { id: decoded.id, username: decoded.username, role: decoded.role, token_version: 1 },
+            { id: decoded.id, username: decoded.username, role: decoded.role, token_version: dbTokenVersion },
             process.env.JWT_SECRET,
             { expiresIn: '1h' }
         );
@@ -181,10 +213,10 @@ exports.logout = async (req, res) => {
             );
         }
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action) VALUES ($1, $2, $3)',
             [userId, role === 'CUSTOMER' ? 'CUSTOMER' : 'USER', 'LOGOUT']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Logout successful" });
     } catch (err) {
@@ -206,10 +238,10 @@ exports.changePassword = async (req, res) => {
         const hashedNew = await hshPw(newPassword);
         await db.query(`UPDATE ${table} SET password_hash = $1, token_version = token_version + 1 WHERE id = $2`, [hashedNew, userId]);
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action) VALUES ($1, $2, $3)',
             [userId, role === 'CUSTOMER' ? 'CUSTOMER' : 'USER', 'PASSWORD_CHANGED']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Password changed successfully. All sessions invalidated." });
     } catch (err) {
@@ -267,10 +299,10 @@ exports.resetPassword = async (req, res) => {
         await db.query('UPDATE customers SET password_hash = $1, failed_login_count = 0, is_locked = FALSE WHERE id = $2', [hashedNew, customerId]);
         await db.query('UPDATE otp_verifications SET is_used = TRUE WHERE id = $1', [otpRes.rows[0].id]);
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action) VALUES ($1, $2, $3)',
             [customerId, 'CUSTOMER', 'PASSWORD_RESET']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Password reset successful. You can now login with your new password." });
     } catch (err) {

@@ -47,10 +47,25 @@ exports.creditMonthlyInterest = async (req, res) => {
             accrualIds.push(a.id);
         });
 
-        // Apply credits to each account
-        for (const [accountId, totalAmount] of Object.entries(sums)) {
-            const accRes = await client.query('SELECT balance_encrypted FROM accounts WHERE id = $1 FOR UPDATE', [accountId]);
-            const currentBalance = parseFloat(decryptAES(accRes.rows[0].balance_encrypted));
+        const accountIds = Object.keys(sums);
+        
+        // Batch fetch all accounts with FOR UPDATE lock in a single query to minimize RTT
+        const accountsRes = await client.query(
+            'SELECT id, balance_encrypted FROM accounts WHERE id = ANY($1) FOR UPDATE',
+            [accountIds]
+        );
+        
+        const accountBalances = {};
+        accountsRes.rows.forEach(row => {
+            accountBalances[row.id] = parseFloat(decryptAES(row.balance_encrypted));
+        });
+
+        // Apply credits to each account using in-memory balances
+        for (const accountId of accountIds) {
+            const totalAmount = sums[accountId];
+            const currentBalance = accountBalances[accountId];
+            if (currentBalance === undefined) continue; // Skip invalid accounts
+            
             const newBalance = currentBalance + totalAmount;
 
             // Create INTEREST transaction
@@ -72,13 +87,15 @@ exports.creditMonthlyInterest = async (req, res) => {
         // Mark all processed accruals as credited
         await client.query('UPDATE interest_accruals SET is_credited = TRUE WHERE id = ANY($1)', [accrualIds]);
 
-        await client.query(
-            'INSERT INTO audit_log (actor_id, actor_type, action, details) VALUES ($1, $2, $3, $4)',
-            [userId, 'USER', 'INTEREST_CREDITED', JSON.stringify({ accounts_count: Object.keys(sums).length, total_accruals: accrualIds.length })]
-        );
-
         await client.query('COMMIT');
-        res.json({ message: `Successfully credited interest to ${Object.keys(sums).length} accounts.` });
+
+        // Audit Log (Non-blocking background query outside transaction)
+        db.query(
+            'INSERT INTO audit_log (actor_id, actor_type, action, details) VALUES ($1, $2, $3, $4)',
+            [userId, 'USER', 'INTEREST_CREDITED', JSON.stringify({ accounts_count: accountIds.length, total_accruals: accrualIds.length })]
+        ).catch(err => console.error('Audit log failed:', err));
+
+        res.json({ message: `Successfully credited interest to ${accountIds.length} accounts.` });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);

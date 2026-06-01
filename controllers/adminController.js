@@ -12,10 +12,10 @@ exports.createUser = async (req, res) => {
             [username, hashedPassword, role, branch_id]
         );
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [adminId, 'USER', 'USER_CREATED', result.rows[0].id, 'USER']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "User created successfully", user: result.rows[0] });
     } catch (err) {
@@ -31,10 +31,10 @@ exports.updateRole = async (req, res) => {
     try {
         await db.query('UPDATE users SET role = $1, token_version = token_version + 1 WHERE id = $2', [role, userId]);
         
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [adminId, 'USER', 'ROLE_CHANGED', userId, 'USER', JSON.stringify({ role })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Role updated and sessions revoked" });
     } catch (err) {
@@ -49,10 +49,10 @@ exports.deactivateUser = async (req, res) => {
     try {
         await db.query('UPDATE users SET is_active = false, token_version = token_version + 1 WHERE id = $1', [userId]);
         
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [adminId, 'USER', 'USER_DEACTIVATED', userId, 'USER']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "User deactivated" });
     } catch (err) {
@@ -67,10 +67,10 @@ exports.revokeSessions = async (req, res) => {
     try {
         await db.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [userId]);
         
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [adminId, 'USER', 'SESSIONS_REVOKED', userId, 'USER']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "All sessions revoked for user" });
     } catch (err) {
@@ -99,10 +99,10 @@ exports.updateBranchConfig = async (req, res) => {
             [daily_limit, upi_limit, teller_limit, branchId]
         );
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [adminId, 'USER', 'BRANCH_CONFIG_UPDATED', branchId, 'BRANCH', JSON.stringify({ daily_limit, upi_limit, teller_limit })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Branch config updated" });
     } catch (err) {
@@ -128,7 +128,13 @@ exports.getHealth = async (req, res) => {
 // Branch Management
 exports.listBranches = async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM branch_config ORDER BY created_at DESC');
+        const result = await db.query(`
+            SELECT b.id, b.name, b.location, b.manager_id, b.created_at,
+                   bc.daily_limit, bc.upi_limit, bc.teller_limit, bc.is_active
+            FROM branches b
+            LEFT JOIN branch_config bc ON b.id = bc.id OR b.name = bc.branch_name
+            ORDER BY b.created_at DESC
+        `);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
@@ -137,23 +143,39 @@ exports.listBranches = async (req, res) => {
 };
 
 exports.createBranch = async (req, res) => {
-    const { branch_name, daily_limit, upi_limit, teller_limit } = req.body;
+    const { branch_name, daily_limit, upi_limit, teller_limit, location } = req.body;
     const { id: adminId } = req.user;
+    
+    const client = await db.getClient();
     try {
-        const result = await db.query(
-            'INSERT INTO branch_config (branch_name, daily_limit, upi_limit, teller_limit) VALUES ($1, $2, $3, $4) RETURNING *',
-            [branch_name, daily_limit || 100000, upi_limit || 50000, teller_limit || 500000]
+        await client.query('BEGIN');
+        
+        // 1. Insert into branches table
+        const branchRes = await client.query(
+            'INSERT INTO branches (name, location) VALUES ($1, $2) RETURNING *',
+            [branch_name, location || 'Default Location']
         );
-
-        await db.query(
+        const branch = branchRes.rows[0];
+        
+        // 2. Insert into branch_config table
+        const configRes = await client.query(
+            'INSERT INTO branch_config (id, branch_name, daily_limit, upi_limit, teller_limit) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [branch.id, branch_name, daily_limit || 100000, upi_limit || 50000, teller_limit || 500000]
+        );
+        
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
-            [adminId, 'USER', 'BRANCH_CREATED', result.rows[0].id, 'BRANCH', JSON.stringify(result.rows[0])]
-        );
-
-        res.status(201).json({ message: "Branch created successfully", branch: result.rows[0] });
+            [adminId, 'USER', 'BRANCH_CREATED', branch.id, 'BRANCH', JSON.stringify({ branch, config: configRes.rows[0] })]
+        ).catch(err => console.error('Audit log failed:', err));
+        
+        await client.query('COMMIT');
+        res.status(201).json({ message: "Branch created successfully", branch: { ...branch, ...configRes.rows[0] } });
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error(err);
         res.status(500).json({ error: "Failed to create branch. Check if name is unique." });
+    } finally {
+        client.release();
     }
 };
 
@@ -169,10 +191,10 @@ exports.updateBranch = async (req, res) => {
 
         if (result.rowCount === 0) return res.status(404).json({ error: "Branch not found" });
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [adminId, 'USER', 'BRANCH_UPDATED', branchId, 'BRANCH', JSON.stringify(req.body)]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Branch updated successfully", branch: result.rows[0] });
     } catch (err) {
@@ -188,10 +210,10 @@ exports.deleteBranch = async (req, res) => {
         // Soft delete: Deactivate the branch
         await db.query('UPDATE branch_config SET is_active = false WHERE id = $1', [branchId]);
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [adminId, 'USER', 'BRANCH_DEACTIVATED', branchId, 'BRANCH']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Branch deactivated" });
     } catch (err) {

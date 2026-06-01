@@ -24,10 +24,10 @@ exports.updatePreferences = async (req, res) => {
         const prefs = JSON.stringify({ sms, email, push });
         await db.query('UPDATE customers SET notification_preferences = $1 WHERE id = $2', [prefs, userId]);
         
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, details) VALUES ($1, $2, $3, $4)',
             [userId, 'CUSTOMER', 'PREFERENCES_UPDATED', prefs]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Preferences updated" });
     } catch (err) {
@@ -35,3 +35,4 @@ exports.updatePreferences = async (req, res) => {
         res.status(500).json({ error: "Failed to update preferences" });
     }
 };
+

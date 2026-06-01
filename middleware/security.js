@@ -1,16 +1,40 @@
 const Redis = require('ioredis');
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
+// Configure Redis to fail fast and not queue commands when disconnected
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 0,
+    connectTimeout: 1000 // Fast timeout
+});
+
+let isRedisConnected = false;
 let redisWarningLogged = false;
+
+redis.on('connect', () => {
+    isRedisConnected = true;
+    redisWarningLogged = false;
+    console.log('[SECURITY] Redis connected successfully. Security features active.');
+});
+
 redis.on('error', (err) => {
+    isRedisConnected = false;
     if (!redisWarningLogged) {
         console.warn('[SECURITY] Redis is unavailable. Security features (Rate Limiting/Replay Protection) are in fail-open mode.');
         redisWarningLogged = true;
     }
 });
 
-// 1. Rate Limiter (Redis-based)
+redis.on('close', () => {
+    isRedisConnected = false;
+});
+
+// 1. Rate Limiter (Redis-based, with in-memory fallback or immediate bypass)
 const rateLimiter = async (req, res, next) => {
+    if (!isRedisConnected) {
+        // Fail-open immediately with 0ms latency if Redis is down
+        return next();
+    }
+
     const ip = req.ip;
     const key = `ratelimit:${ip}`;
     
@@ -32,10 +56,9 @@ const rateLimiter = async (req, res, next) => {
 const replayProtection = async (req, res, next) => {
     const nonce = req.headers['x-nonce'];
     const timestamp = req.headers['x-timestamp'];
-
     if (!nonce || !timestamp) {
-        // For public routes, skip. For transactions, enforce.
-        if (req.path.includes('/transactions')) {
+        // For public/GET routes, skip. For mutating transaction submissions (POST), enforce.
+        if (req.path.includes('/transactions') && req.method === 'POST') {
             return res.status(400).json({ error: "Security validation failed: Missing nonce/timestamp" });
         }
         return next();
@@ -48,14 +71,24 @@ const replayProtection = async (req, res, next) => {
         return res.status(403).json({ error: "Request expired. Replay attack blocked." });
     }
 
+    if (!isRedisConnected) {
+        // Fail-open immediately if Redis is down
+        return next();
+    }
+
     // Check if nonce has been used
     const nonceKey = `nonce:${nonce}`;
-    const wasSet = await redis.set(nonceKey, '1', 'EX', 300, 'NX');
-    if (!wasSet) {
-        return res.status(403).json({ error: "Identity mismatch: Nonce already used." });
+    try {
+        const wasSet = await redis.set(nonceKey, '1', 'EX', 300, 'NX');
+        if (!wasSet) {
+            return res.status(403).json({ error: "Identity mismatch: Nonce already used." });
+        }
+    } catch (err) {
+        // Fail-open on Redis error
     }
 
     next();
 };
 
 module.exports = { rateLimiter, replayProtection };
+

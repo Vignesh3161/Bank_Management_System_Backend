@@ -25,10 +25,10 @@ exports.openAccount = async (req, res) => {
         );
 
         // Audit Log
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [userId, role === 'CUSTOMER' ? 'CUSTOMER' : 'USER', 'ACCOUNT_OPENED', result.rows[0].id, 'ACCOUNT', JSON.stringify({ account_number: accountNumber })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json(result.rows[0]);
     } catch (err) {
@@ -58,10 +58,10 @@ exports.getAccountDetails = async (req, res) => {
 
         // Log access for TELLER+
         if (role !== 'CUSTOMER') {
-            await db.query(
+            db.query(
                 'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
                 [userId, 'USER', 'ACCOUNT_FETCHED', accountId, 'ACCOUNT']
-            );
+            ).catch(err => console.error('Audit log failed:', err));
         }
 
         res.json(account);
@@ -121,10 +121,10 @@ exports.updateAccountStatus = async (req, res) => {
     try {
         await db.query('UPDATE accounts SET status = $1 WHERE id = $2', [status, accountId]);
         
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [userId, 'USER', 'ACCOUNT_STATUS_CHANGED', accountId, 'ACCOUNT', JSON.stringify({ status, reason })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: `Account status updated to ${status}` });
     } catch (err) {
@@ -144,10 +144,10 @@ exports.updateLimits = async (req, res) => {
             [accountId, limit_type, max_amount, userId]
         );
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [userId, 'USER', 'LIMIT_CHANGED', accountId, 'ACCOUNT', JSON.stringify({ limit_type, max_amount })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Limits updated successfully" });
     } catch (err) {
@@ -166,10 +166,10 @@ exports.searchAccounts = async (req, res) => {
             [`%${query}%`, branch_id]
         );
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, details) VALUES ($1, $2, $3, $4)',
             [req.user.id, 'USER', 'ACCOUNT_SEARCH', JSON.stringify({ query })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json(result.rows);
     } catch (err) {
@@ -195,10 +195,10 @@ exports.getStatement = async (req, res) => {
             [accountId, startDate || '1970-01-01', endDate || new Date()]
         );
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [userId, role === 'CUSTOMER' ? 'CUSTOMER' : 'USER', 'STATEMENT_DOWNLOADED', accountId, 'ACCOUNT']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json(result.rows);
     } catch (err) {

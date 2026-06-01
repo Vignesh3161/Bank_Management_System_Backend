@@ -15,10 +15,10 @@ exports.submitKYC = async (req, res) => {
 
         await db.query('UPDATE customers SET kyc_status = \'SUBMITTED\' WHERE id = $1', [userId]);
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [userId, 'CUSTOMER', 'KYC_SUBMITTED', result.rows[0].id, 'KYC']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "KYC submitted successfully", kycId: result.rows[0].id });
     } catch (err) {
@@ -62,10 +62,10 @@ exports.getDocumentUrl = async (req, res) => {
 
         const path = decryptAES(result.rows[0].document_path_encrypted);
         
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [userId, 'USER', 'DOCUMENT_ACCESSED', kycId, 'KYC']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ url: `https://bank-storage.internal/${path}?token=signed_temp_token` });
     } catch (err) {
@@ -89,10 +89,10 @@ exports.reviewKYC = async (req, res) => {
         const status = decision === 'APPROVE' ? 'VERIFIED' : 'REJECTED';
         await db.query('UPDATE customers SET kyc_status = $1 WHERE id = $2', [status, kyc.rows[0].customer_id]);
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [userId, 'USER', 'KYC_REVIEWED', kycId, 'KYC', JSON.stringify({ decision, reason })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: `KYC ${decision}D` });
     } catch (err) {

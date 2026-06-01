@@ -1,9 +1,28 @@
 require('dotenv').config();
 const { Pool } = require('pg');
+const dns = require('dns');
+
+// Create a custom DNS resolver to bypass local ISP / network blocks on Neon databases
+const resolver = new dns.Resolver();
+resolver.setServers(['8.8.8.8', '1.1.1.1']);
+
+const customLookup = (hostname, options, callback) => {
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+        return dns.lookup(hostname, options, callback);
+    }
+    resolver.resolve4(hostname, (err, addresses) => {
+        if (!err && addresses && addresses.length > 0) {
+            return callback(null, addresses[0], 4);
+        }
+        // Fallback to standard DNS lookup
+        dns.lookup(hostname, options, callback);
+    });
+};
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false },
+    lookup: customLookup
 });
 
 async function run() {
@@ -56,6 +75,7 @@ async function run() {
                 pan_encrypted TEXT,
                 aadhaar_encrypted TEXT,
                 status TEXT DEFAULT 'active',
+                token_version INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);

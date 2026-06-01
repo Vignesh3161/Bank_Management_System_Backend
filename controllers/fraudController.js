@@ -34,10 +34,10 @@ exports.reviewAlert = async (req, res) => {
             [decision, reason, userId, alertId]
         );
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [userId, 'USER', 'ALERT_REVIEWED', alertId, 'FRAUD_ALERT', JSON.stringify({ decision, reason })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: `Alert ${decision}` });
     } catch (err) {
@@ -58,10 +58,10 @@ exports.blockAccount = async (req, res) => {
         await db.query('UPDATE accounts SET status = \'FROZEN\' WHERE id = $1', [accountId]);
         await db.query('UPDATE fraud_alerts SET status = \'BLOCKED\' WHERE id = $1', [alertId]);
 
-        await db.query(
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type) VALUES ($1, $2, $3, $4, $5)',
             [userId, 'USER', 'EMERGENCY_ACCOUNT_FREEZE', accountId, 'ACCOUNT']
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
         res.json({ message: "Account frozen and alert marked as BLOCKED" });
     } catch (err) {

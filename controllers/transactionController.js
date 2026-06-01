@@ -45,13 +45,14 @@ exports.transfer = async (req, res) => {
         await client.query('INSERT INTO ledger_entries (transaction_id, account_id, debit, balance_after) VALUES ($1, $2, $3, $4)', [txId, fromAccountId, amountNum, newFrom]);
         await client.query('INSERT INTO ledger_entries (transaction_id, account_id, credit, balance_after) VALUES ($1, $2, $3, $4)', [txId, toAccountId, amountNum, newTo]);
 
-        // Audit Log
-        await client.query(
+        await client.query('COMMIT');
+
+        // Audit Log (Non-blocking background query outside transaction)
+        db.query(
             'INSERT INTO audit_log (actor_id, actor_type, action, entity_id, entity_type, details) VALUES ($1, $2, $3, $4, $5, $6)',
             [userId, role === 'CUSTOMER' ? 'CUSTOMER' : 'USER', 'TRANSFER_COMPLETED', txId, 'TRANSACTION', JSON.stringify({ fromAccountId, toAccountId, amountNum })]
-        );
+        ).catch(err => console.error('Audit log failed:', err));
 
-        await client.query('COMMIT');
         res.json({ success: true, txId });
     } catch (err) {
         await client.query('ROLLBACK');
