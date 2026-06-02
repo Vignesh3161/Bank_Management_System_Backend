@@ -1,126 +1,49 @@
-# Bank_Management_System_Backend
-An enterprise-grade Core Banking System (CBS) backend built with Node.js, Express, PostgreSQL, and Redis. Features include double-entry ledger accounting, AES-256 &amp; RSA-2048 security, AML/KYC compliance workflows, RBAC, fraud detection, immutable audit logging, and high-integrity financial transaction processing.
-# Antigravity Core Banking API 🏦
+# 🏦 Core Banking & Financial Security Suite (Digital Bank of India)
 
-[![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg)](https://nodejs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15.x-blue.svg)](https://www.postgresql.org/)
-[![Security](https://img.shields.io/badge/Security-AES--256%20|%20RSA-red.svg)](#security-architecture)
+Welcome to the full-stack repository for the **Digital Bank of India** — a next-generation Core Banking System and security operations suite. 
 
-An enterprise-grade, high-security backend infrastructure for a modern Core Banking System (CBS). Built with architectural integrity, financial precision (Double-Entry Ledger), and regulatory compliance (AML/KYC) at its core.
+This repository contains two main services that form a highly robust, secure, and compliant financial ecosystem:
+1. **🏦 Core Banking Backend REST API:** Node.js, Express, and serverless Neon PostgreSQL, hardened with Redis-backed rate limiters, replay attack prevention, and symmetric AES-256 payload encryption.
+2. **💻 Premium Staff & Customer Portal:** A sleek React 19 + Vite 8 frontend client featuring a curated dark theme, micro-interactions, role-restricted dashboard paths, and real-time bank officer queues.
 
 ---
 
-## 🚀 Key Features
+## 🔗 Live Deployments
 
-### 🔐 Security & Integrity
-- **Military-Grade Encryption**: Balances and sensitive transaction data are encrypted at rest using **AES-256-CBC**.
-- **Digital Fingerprints**: Transactions are signed with **RSA-2048** to ensure non-repudiation and prevent tampering.
-- **Deduplication**: Uses **HMAC-SHA256** for email and mobile identifiers to prevent duplicate registrations without storing PII in plaintext.
-- **Replay Protection**: Middleware to prevent request capturing and replay attacks.
-
-### 💼 Financial Core
-- **Double-Entry Ledger**: Every transaction generates balanced debit/credit entries in a dedicated ledger for 100% financial accuracy.
-- **Multi-Role Access (RBAC)**:
-  - `CUSTOMER`: Personal banking, transfers, and KYC submission.
-  - `TELLER`: Cash deposits, withdrawals, and local transaction handling.
-  - `BRANCH_MANAGER`: Operational oversight and limit approvals.
-  - `KYC_OFFICER`: Document verification and identity vetting.
-  - `AUDITOR`: Immutable trail review and regulatory reporting.
-  - `SYSTEM_ADMIN`: Global configuration and staff management.
-
-### 🛡️ Compliance & Fraud Prevention
-- **KYC Workflow**: Automated document submission, OCR simulation, and manual review pipeline.
-- **Audit Logging**: Immutable, gap-detecting audit trail with sequence-verified logging for all administrative actions.
-- **Fraud Detection**: Real-time monitoring for velocity anomalies, structural patterns (AML), and geographical inconsistencies.
-- **Interest Engine**: Automated accrual and credit system for FD and Savings accounts.
+* **💻 Client Portal (Frontend):** [https://bank-management-system-19dp.onrender.com/](https://bank-management-system-19dp.onrender.com/)
+* **🏦 Banking REST API (Backend):** [https://bank-management-system-backend-five.vercel.app/api](https://bank-management-system-backend-five.vercel.app/api)
 
 ---
 
-## 🛠️ Technology Stack
-- **Runtime**: Node.js
-- **Framework**: Express.js (V5)
-- **Database**: PostgreSQL (Relational Data & ACID compliance)
-- **Cache/Session**: Redis (Token blacklisting & Rate limiting)
-- **Authentication**: JWT (JSON Web Tokens) with Token Versioning
-- **Security Libraries**: `crypto`, `otplib` (2FA/TOTP), `bcryptjs`
+## 📂 Repository Structure
+
+* [**`/backend`**](./backend/README.md) - Contains the Node/Express backend code, cryptographic key handlers, PostgreSQL initializers, security middlewares, and automated audit loggers.
+* [**`/frontend`**](./frontend/README.md) - Contains the React client application, Vite config schemas, context layers, custom page templates, and assets.
 
 ---
 
-## 📂 Project Structure
-```text
-backend/
-├── controllers/    # Business logic for all 52 endpoints
-├── db/             # PostgreSQL connection and helper queries
-├── middleware/     # Auth, Audit, Security & Rate limiting
-├── routes/         # Express route definitions
-├── utils/          # Crypto helpers (AES, RSA, HMAC)
-├── server.js       # Entry point & Middleware orchestration
-├── schema.sql      # Database schema (DDL)
-└── migrate.js      # Automation for schema deployment
-```
+## ⚙️ Quick Local Architecture Setup
+
+To run the full-stack system locally:
+
+1. **Start the API Server:**
+   * Go to `/backend`
+   * Configure `.env` with PostgreSQL and Redis connections (details in [backend/README.md](./backend/README.md))
+   * Run `npm install`
+   * Initialize tables and seed master keys: `node db/init-full-db.js && node db/seed-admin.js`
+   * Run the API server: `npm run dev` (running on `http://localhost:5000`)
+
+2. **Start the Client Portal:**
+   * Go to `/frontend`
+   * Configure `.env` with `VITE_API_URL=http://localhost:5000/api` (details in [frontend/README.md](./frontend/README.md))
+   * Run `npm install`
+   * Launch the dev server: `npm run dev` (running on `http://localhost:5173`)
 
 ---
 
-## ⚙️ Setup & Installation
+## 🛡️ Key Features & Cryptographic Hardening
 
-### 1. Prerequisites
-- Node.js (v18+)
-- PostgreSQL (v14+)
-- Redis Server
-
-### 2. Environment Configuration
-Create a `.env` file in the root directory:
-```env
-PORT=5000
-DATABASE_URL=postgresql://user:password@localhost:5432/banking_db
-JWT_SECRET=your_super_secret_key_here
-REDIS_URL=redis://localhost:6379
-MASTER_KEY=32_byte_hex_for_aes_encryption
-```
-
-### 3. Installation
-```bash
-# Install dependencies
-npm install
-
-# Initialize database schema
-node migrate.js
-
-# Seed system administrator
-node seed_admin.cjs
-```
-
-### 4. Running the Server
-```bash
-# Development mode (with nodemon)
-npm run dev
-
-# Production mode
-npm start
-```
-
----
-
-## 📡 API Categories
-| Category | Purpose |
-| :--- | :--- |
-| `/api/auth` | Login, 2FA, OTP Verification, Password Management |
-| `/api/accounts` | Open accounts, Status management, Limits, Statements |
-| `/api/transactions` | Transfers, Deposits, Withdrawals, Reversals |
-| `/api/kyc` | Submission, Document handling, Approval pipeline |
-| `/api/admin` | Branch config, Staff management, Global settings |
-| `/api/audit` | Regulatory log access, System statistics |
-| `/api/fraud` | Real-time alerts, Risk score resolution |
-
----
-
-## 🔒 Security Architecture
-The system employs a **Layered Defense Strategy**:
-1. **Network Layer**: CORS restricted to trusted origins, Rate Limiting.
-2. **Application Layer**: RBAC enforced on every route, Input validation.
-3. **Data Layer**: Sensitive fields (Balance, Amount, Doc Paths) never stored in cleartext.
-4. **Identity Layer**: 2FA required for high-value actions and staff logins.
-
----
-
-## ⚖️ License
+* **Multi-Dashboard Operational Framework:** Custom portals tailored for **Customers**, **Tellers**, **Branch Managers**, **Compliance/KYC Officers**, and **Auditors**.
+* **Zero-Trust Middlewares:** Dynamic Redis rate-limiting (100req/min) and request expiry validation protecting the ledger from replay attempts.
+* **Master Key Bootstrapping:** AES-256-CBC and HMAC signature verification ensure every client request is mathematically verified.
+* **Immutable Audit Trail:** Automated auditing triggers recording every action into the audit explorer database automatically.
